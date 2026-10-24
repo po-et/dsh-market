@@ -8917,6 +8917,100 @@ describe('when DSH has unloaded the market (#962)', () => {
   })
 })
 
+describe('latest installed refresh', () => {
+  it.each([false, true])('keeps the disabled switch after a newer refresh (request fails: %s)', async latestFails => {
+    const installed = {
+      profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'], disabled: [] as string[],
+      groups: {}, groupOrder: [], favorites: [], blocked: [],
+      activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true } },
+    }
+    let current = installed
+    const base = stubFetch({
+      '/dsh-market/installed': () => current,
+      '/dsh-market/toggle': () => {
+        current = { ...installed, live: [], disabled: ['dsh-loop'] }
+        return { ok: true, disabled: current.disabled, live: current.live, activation: current.activation }
+      },
+    })
+    let reads = 0
+    let release = (): void => {}
+    const pending = new Promise<void>(resolve => { release = resolve })
+    vi.stubGlobal('fetch', (input: unknown, init?: RequestInit) => {
+      if (String(input).split('?')[0] === '/dsh-market/installed') {
+        reads += 1
+        if (reads === 2) {
+          const captured = JSON.stringify(current)
+          return pending.then(() => new Response(captured))
+        }
+        if (reads === 3 && latestFails) return Promise.reject(new Error('the latest read failed'))
+      }
+      return base(input, init)
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    await screen.findByRole('switch', { name: en.disable + ' dsh-loop' })
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    expect(reads).toBe(2)
+    fireEvent.click(screen.getByRole('switch', { name: en.disable + ' dsh-loop' }))
+    await waitFor(() => { expect(reads).toBe(3) })
+    const switchedOff = await screen.findByRole('switch', { name: en.enable + ' dsh-loop' })
+    expect(switchedOff.getAttribute('aria-checked')).toBe('false')
+    await act(async () => { release(); await pending })
+    expect(screen.getByRole('switch', { name: en.enable + ' dsh-loop' }).getAttribute('aria-checked')).toBe('false')
+    expect(screen.queryByRole('switch', { name: en.disable + ' dsh-loop' })).toBeNull()
+  })
+
+  it('keeps the latest installed list instead of restoring packages from an older read', async () => {
+    const old = { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [], disabled: [] }
+    const fresh = { profile: 'web', installed: { 'dsh-fresh-state': '^2.0.0' }, live: [], disabled: [] }
+    const base = stubFetch({ '/dsh-market/installed': old })
+    let reads = 0
+    let release = (): void => {}
+    const pending = new Promise<void>(resolve => { release = resolve })
+    vi.stubGlobal('fetch', (input: unknown, init?: RequestInit) => {
+      if (String(input).split('?')[0] !== '/dsh-market/installed') return base(input, init)
+      reads += 1
+      if (reads === 2) return pending.then(() => new Response(JSON.stringify(old)))
+      return Promise.resolve(new Response(JSON.stringify(reads < 3 ? old : fresh)))
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    expect(reads).toBe(3)
+    await screen.findByText('dsh-fresh-state')
+    await act(async () => { release(); await pending })
+    expect(screen.getByText('dsh-fresh-state')).toBeTruthy()
+    expect(screen.queryByText('dsh-loop')).toBeNull()
+  })
+
+  it('does not restore an old update offer after a newer update check completed', async () => {
+    const old = { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '9.8.7', updateAvailable: true } } }
+    const fresh = { updates: { 'dsh-loop': { kind: 'npm', version: '9.8.7', current: '9.8.7', latest: '9.8.7', updateAvailable: false } } }
+    const base = stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [], disabled: [] },
+    })
+    let reads = 0
+    let release = (): void => {}
+    const pending = new Promise<void>(resolve => { release = resolve })
+    vi.stubGlobal('fetch', (input: unknown, init?: RequestInit) => {
+      if (String(input).split('?')[0] !== '/dsh-market/updates') return base(input, init)
+      reads += 1
+      if (reads === 2) return pending.then(() => new Response(JSON.stringify(old)))
+      return Promise.resolve(new Response(JSON.stringify(reads < 3 ? old : fresh)))
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    await screen.findByRole('button', { name: en.update })
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    expect(reads).toBe(3)
+    await screen.findByText(re('v9.8.7'))
+    expect(screen.queryByRole('button', { name: en.update })).toBeNull()
+    await act(async () => { release(); await pending })
+    expect(screen.getByText(re('v9.8.7'))).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.update })).toBeNull()
+  })
+})
+
 describe('OwnerAvatar icon', () => {
   it('prefers the catalog-declared icon over the owner avatar', () => {
     const icon = 'https://raw.githubusercontent.com/alice/dsh-loop/main/assets/icon.png'

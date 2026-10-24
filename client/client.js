@@ -9481,6 +9481,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			* the read has since settled.
 			*/
 			const installedReadGen = (0, react.useRef)(0);
+			/** A newer refresh supersedes both snapshots from an older request. */
+			const installedRefreshGen = (0, react.useRef)(0);
 			/** Rows with a dismiss in flight, so one row cannot queue two. */
 			const [dismissingBroken, setDismissingBroken] = (0, react.useState)(() => /* @__PURE__ */ new Set());
 			const [envFixing, setEnvFixing] = (0, react.useState)(false);
@@ -9653,7 +9655,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			/** True while the drain is executing one queued request (no parallel starts). */
 			const drainingRef = (0, react.useRef)(false);
 			const refreshInstalled = (0, react.useCallback)((force) => {
+				const generation = ++installedRefreshGen.current;
 				fetch(api("/dsh-market/installed"), { cache: "no-store" }).then((res) => res.json()).then((body) => {
+					if (generation !== installedRefreshGen.current) return;
 					setInstalled(body.installed || {});
 					setRepoIdentities(installedRepoIdentities(body.repoIdentities));
 					setRepoHints(installedRepoHints(body.repoHints));
@@ -9686,6 +9690,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}));
 				}).catch(() => {});
 				fetch(api("/dsh-market/updates") + (force === true ? "?force=1" : ""), { cache: "no-store" }).then((res) => res.json()).then((body) => {
+					if (generation !== installedRefreshGen.current) return;
 					setUpdates(body.updates || {});
 					cachedUpdatesReady = true;
 					setQueueSnapshotReady((ready) => ({

@@ -2737,6 +2737,8 @@ export function MarketSection(props: MarketSectionProps) {
    * the read has since settled.
    */
   const installedReadGen = useRef(0)
+  /** A newer refresh supersedes both snapshots from an older request. */
+  const installedRefreshGen = useRef(0)
   /** Rows with a dismiss in flight, so one row cannot queue two. */
   const [dismissingBroken, setDismissingBroken] = useState<ReadonlySet<string>>(() => new Set())
   const [envFixing, setEnvFixing] = useState(false)
@@ -2927,9 +2929,11 @@ export function MarketSection(props: MarketSectionProps) {
   const drainingRef = useRef(false)
 
   const refreshInstalled = useCallback((force?: boolean) => {
+    const generation = ++installedRefreshGen.current
     fetch(api('/dsh-market/installed'), { cache: 'no-store' })
       .then(res => res.json())
       .then(body => {
+        if (generation !== installedRefreshGen.current) return
         setInstalled(body.installed || {})
         setRepoIdentities(installedRepoIdentities(body.repoIdentities))
         setRepoHints(installedRepoHints(body.repoHints))
@@ -2975,6 +2979,7 @@ export function MarketSection(props: MarketSectionProps) {
     fetch(api('/dsh-market/updates') + (force === true ? '?force=1' : ''), { cache: 'no-store' })
       .then(res => res.json())
       .then(body => {
+        if (generation !== installedRefreshGen.current) return
         setUpdates(body.updates || {})
         cachedUpdatesReady = true
         setQueueSnapshotReady(ready => ({ ...ready, updates: true }))
